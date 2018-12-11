@@ -41,6 +41,12 @@ set config {
 		</route>
 		<config ld_verbose="no">
 			<arg value="/bin/java" />
+			<arg value="-XX:+NeverActAsServerClassMachine"/>
+			<arg value="-XX:+UnlockDiagnosticVMOptions"/>
+			<arg value="-XX:-ImplicitNullChecks"/>
+			<arg value="-XX:+CITime" />
+			<!-- <arg value="-Xcomp"/> -->
+			<!-- <arg value="-XX:+PrintCompilation" /> -->
 			<arg value="-jar" />
 			<arg value="hello.jar" />
 			<libc stdin="/dev/null" stdout="/dev/log" stderr="/dev/log" rtc="/dev/rtc" />
