@@ -95,7 +95,7 @@ append config {
 				<rom name="hamburg"/>
 			</content>
 			<policy label_prefix="download -> fetchurl" writeable="yes" root="/"/>
-			<policy label_prefix="java" writeable="no" root="/" />
+			<policy label_prefix="java" writeable="yes" root="/" />
 			<policy label_prefix="fs_log" writeable="yes" root="/" />
 		</config>
 	</start>
@@ -197,17 +197,19 @@ append config {
 			<service name="ROM" label="net.lib.so">
 				<parent label="jnet.lib.so" />
 			</service>
-			<service name="Nic"><child name="nic_drv" label="fec1" /></service>
+			<!-- <service name="Nic"><child name="nic_drv" label="fec1" /></service> -->
 			<!-- <service name="LOG"><child name="fs_log" /></service> -->
 			<any-service> <parent/> <any-child/> </any-service>
 		</route>
-		<config ld_verbose="yes">
+		<config ld_verbose="no">
 			<arg value="/bin/java" />
 			<arg value="-XX:+NeverActAsServerClassMachine"/>
 			<arg value="-XX:+UnlockDiagnosticVMOptions"/>
 			<arg value="-XX:-ImplicitNullChecks"/>
 			<arg value="-XX:+CITime" />
-			<arg value="-Xlog:gc" />
+<!--			<arg value="-Xlog:gc" /> -->
+			<arg value="-verbose:jni"/>
+			<arg value="-Dspring.config.location=/application.properties"/>
 			<arg value="-jar" />
 			<arg value="servlet.jar" />
 			<libc stdin="/dev/null" stdout="/dev/log" stderr="/dev/log" rtc="/dev/rtc" socket="/dev/socket" />
@@ -242,11 +244,22 @@ append config {
 				<dir name="var">
 					<dir name="tmp"> <ram/> </dir>
 				</dir>
+				<dir name="conf">
+					<dir name="security">
+						<dir name="policy">
+							<dir name="unlimited">
+								<rom name="default_local.policy"/>
+							</dir>
+						</dir>
+					</dir>
+				</dir>
 				<rom name="zip.lib.so" />
 				<rom name="nio.lib.so" />
 				<rom name="net.lib.so" />
 				<rom name="management.lib.so" />
 				<tar name="servlet.tar"/>
+				<rom name="ca.cert"/>
+				<rom name="application.properties"/>
 			</vfs>
 		</config>
 	</start>
@@ -277,8 +290,11 @@ set boot_modules {
 	curl.lib.so libcrypto.lib.so libssh.lib.so libssl.lib.so
 	fetchurl
 
-	classes.tar 
+	classes.tar
 	default.policy
+	ca.cert
+	default_local.policy
+	application.properties
 	dresden hamburg leipzig nuremberg tzdb.dat
 }
 
