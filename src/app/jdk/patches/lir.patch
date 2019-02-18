@@ -1,33 +1,30 @@
 diff --git a/hotspot/src/cpu/arm/vm/c1_LIRAssembler_arm.cpp b/hotspot/src/cpu/arm/vm/c1_LIRAssembler_arm.cpp
-index caf0071..c751007 100644
+index caf0071..e5b8d87 100644
 --- a/hotspot/src/cpu/arm/vm/c1_LIRAssembler_arm.cpp
 +++ b/hotspot/src/cpu/arm/vm/c1_LIRAssembler_arm.cpp
-@@ -352,6 +352,18 @@ void LIR_Assembler::return_op(LIR_Opr result) {
+@@ -352,6 +352,7 @@ void LIR_Assembler::return_op(LIR_Opr result) {
    __ ret();
  }
  
 +#if 0
+ 
+ int LIR_Assembler::safepoint_poll(LIR_Opr tmp, CodeEmitInfo* info) {
+   __ mov_address(Rtemp, os::get_polling_page(), symbolic_Relocation::polling_page_reference);
+@@ -364,6 +365,27 @@ int LIR_Assembler::safepoint_poll(LIR_Opr tmp, CodeEmitInfo* info) {
+   return offset;
+ }
+ 
++#else
++
 +int LIR_Assembler::safepoint_poll(LIR_Opr tmp, CodeEmitInfo* info) {
 +  __ mov_address(Rtemp, os::get_polling_page(), symbolic_Relocation::polling_page_reference);
 +  if (info != NULL) {
 +    add_debug_info_for_branch(info);
 +  }
 +  int offset = __ offset();
++  Label out;
 +  __ relocate(relocInfo::poll_type);
 +  __ ldr(Rtemp, Address(Rtemp));
-+  return offset;
-+}
-+#endif
- 
- int LIR_Assembler::safepoint_poll(LIR_Opr tmp, CodeEmitInfo* info) {
-   __ mov_address(Rtemp, os::get_polling_page(), symbolic_Relocation::polling_page_reference);
-@@ -359,8 +371,16 @@ int LIR_Assembler::safepoint_poll(LIR_Opr tmp, CodeEmitInfo* info) {
-     add_debug_info_for_branch(info);
-   }
-   int offset = __ offset();
-+  Label out;
-   __ relocate(relocInfo::poll_type);
-   __ ldr(Rtemp, Address(Rtemp));
 +  __ cmp(Rtemp, 1);
 +  __ b(out, eq);
 +  __ save_all_registers();
@@ -35,11 +32,14 @@ index caf0071..c751007 100644
 +  __ restore_all_registers();
 +  __ bind(out);
 +
-   return offset;
- }
++  return offset;
++}
++#endif
  
+ void LIR_Assembler::move_regs(Register from_reg, Register to_reg) {
+   if (from_reg != to_reg) {
 diff --git a/hotspot/src/cpu/x86/vm/c1_LIRAssembler_x86.cpp b/hotspot/src/cpu/x86/vm/c1_LIRAssembler_x86.cpp
-index 8aa4aec..c11b0af 100644
+index 8aa4aec..6c04b06 100644
 --- a/hotspot/src/cpu/x86/vm/c1_LIRAssembler_x86.cpp
 +++ b/hotspot/src/cpu/x86/vm/c1_LIRAssembler_x86.cpp
 @@ -526,6 +526,7 @@ void LIR_Assembler::return_op(LIR_Opr result) {
@@ -65,7 +65,7 @@ index 8aa4aec..c11b0af 100644
  int LIR_Assembler::safepoint_poll(LIR_Opr tmp, CodeEmitInfo* info) {
    AddressLiteral polling_page(os::get_polling_page(), relocInfo::poll_type);
    guarantee(info != NULL, "Shouldn't be NULL");
-@@ -555,7 +559,41 @@ int LIR_Assembler::safepoint_poll(LIR_Opr tmp, CodeEmitInfo* info) {
+@@ -555,7 +559,42 @@ int LIR_Assembler::safepoint_poll(LIR_Opr tmp, CodeEmitInfo* info) {
    }
    return offset;
  }
@@ -90,8 +90,9 @@ index 8aa4aec..c11b0af 100644
 +  __ pushf();
 +  __ pusha();
 +  __ push(rax);
-+  __ set_last_Java_frame(thread, noreg, rbp, __ pc());
++  __ set_last_Java_frame(rsp, rbp, __ pc());
 +  __ call(RuntimeAddress((address)os::garbage_collector));
++  __ reset_last_Java_frame(true);
 +  __ pop(rax);
 +  __ popa();
 +  __ popf();

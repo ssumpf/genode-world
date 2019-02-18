@@ -3291,30 +3291,14 @@ jint os::init_2(void) {
   return JNI_OK;
 }
 
-extern "C" void wait_for_continue();
 void os::garbage_collector()
 {
-	if (polling_page_readable) return;
-	//PDBG("PAGE HANDLER readable: ", polling_page_readable);
-//wait_for_continue();
-	/* start garbarge collector */
-	address pc = __builtin_return_address(0);
-	//void (*stub)() = (void (*)())SharedRuntime::get_poll_stub(pc);
-	address stub2 = SharedRuntime::get_poll_stub(pc);
-	//PDBG("CALL", " thread: ", Thread::current(), " ip: ", (void*)pc);
-	//stub();
+	return;
 
-	//JavaThread *c = JavaThread::current();
-	//c->set_saved_exception_pc(pc);
-/*
-	asm volatile(
-		"movq %1, %%r15\n"
-		"jmp  *%0\n"
-		: : "r"(stub2), "r"(c));
-*/
-	//SafepointSynchronize::handle_polling_page_exception(c);
-	//SafepointSynchronize::block(c);
-	//PDBG("RETURN");
+	/* TODO: enable gargabe collector
+	if (polling_page_readable) return;
+	SafepointSynchronize::handle_polling_page_exception(c);
+	SafepointSynchronize::block(c); */
 }
 
 // Mark the polling page as unreadable
