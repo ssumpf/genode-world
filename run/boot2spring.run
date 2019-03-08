@@ -9,19 +9,18 @@ set build_components {
 
 	app/jdk/lib/generated
 	app/jdk/java
-	app/log_core
 
 	drivers/nic
 	drivers/gpio
 	drivers/sd_card
 
-	server/fs_log
 	server/fs_rom
 	server/nic_router
 	server/part_block
 	server/report_rom
 	server/vfs
-	lib/vfs/lxip
+
+	lib/vfs/lwip
 	lib/vfs/rump
 }
 
@@ -32,8 +31,6 @@ append_platform_drv_build_components
 
 build $build_components
 create_boot_directory
-
-# import_from_depot [depot_user]/pkg/boot2java
 
 append config {
 <config verbose="yes">
@@ -105,24 +102,6 @@ append config {
 		</route>
 	</start>
 
-	<start name="vfs_nic" caps="300">
-		<binary name="vfs"/>
-		<resource name="RAM" quantum="64M"/>
-		<provides> <service name="File_system"/> </provides>
-		<route>
-			<service name="Nic"><child name="nic_router"/></service>
-			<any-service> <parent/> <any-child/> </any-service>
-		</route>
-		<config>
-			<vfs>
-				<dir name="socket">
-					<lxip dhcp="yes" />
-				</dir>
-			</vfs>
-			<default-policy root="/" writeable="yes" />
-		</config>
-	</start>
-
 	<!-- block and file system access -->
 
 	<start name="sd_card_drv">
@@ -142,13 +121,13 @@ append config {
 
 	<start name="vfs_block" caps="300">
 		<binary name="vfs"/>
-		<resource name="RAM" quantum="48M"/>
+		<resource name="RAM" quantum="64M"/>
 		<provides> <service name="File_system"/> </provides>
 		<route>
 			<service name="Block"><child name="part_block"/></service>
 			<any-service> <parent/> <any-child/> </any-service>
 		</route>
-		<config ld_verbose="yes">
+		<config>
 			<vfs>
 				<rump fs="ext2fs" ram="32M" writeable="yes"/>
 			</vfs>
@@ -157,39 +136,11 @@ append config {
 	</start>
 
 	<start name="fs_rom">
-		<resource name="RAM" quantum="80M" />
+		<resource name="RAM" quantum="100M" />
 		<provides><service name="ROM"/></provides>
 		<route>
 			<service name="File_system"> <child name="vfs_block"/> </service>
 			<any-service> <parent/> </any-service>
-		</route>
-	</start>
-
-	<!-- logging onto file system -->
-
-	<start name="fs_log">
-		<resource name="RAM" quantum="2M"/>
-		<provides><service name="LOG"/></provides>
-		<config>
-			<default-policy merge="yes"/>
-		</config>
-		<route>
-			<service name="File_system"> <child name="vfs_block"/> </service>
-			<any-service> <parent/> </any-service>
-		</route>
-	</start>
-	<start name="log_core">
-		<resource name="RAM" quantum="10M"/>
-		<config period_ms="2000"/>
-		<route>
-			<service name="ROM" unscoped_label="log_core"> <parent/> </service>
-			<service name="ROM" unscoped_label="ld.lib.so"> <parent/> </service>
-			<service name="ROM" label="log"> <parent label="core_log"/> </service>
-			<service name="Timer"> <child name="timer"/> </service>
-			<service name="LOG" label="log"> <child name="fs_log"/> </service>
-			<service name="PD"> <parent/> </service>
-			<service name="CPU"> <parent/> </service>
-			<service name="LOG"> <parent/> </service>
 		</route>
 	</start>
 
@@ -207,21 +158,10 @@ append config {
 			<service name="ROM" label="classes.tar">
 				<child name="fs_rom" />
 			</service>
-			<service name="ROM" label="libc.lib.so">
-				<child name="fs_rom" />
-			</service>
-			<service name="ROM" label="libm.lib.so">
-				<child name="fs_rom" />
-			</service>
-			<service name="ROM" label="jvm.lib.so">
-				<child name="fs_rom" />
-			</service>
-			<service name="File_system" label="nic">
-				<child name="vfs_nic"/>
-			</service>
 			<service name="File_system" label="block">
 				<child name="vfs_block"/>
 			</service>
+			<service name="Nic"><child name="nic_router"/></service>
 			<any-service> <parent/> <any-child/> </any-service>
 		</route>
 		<config ld_verbose="no">
@@ -230,14 +170,16 @@ append config {
 			<arg value="-XX:+UnlockDiagnosticVMOptions"/>
 			<arg value="-XX:-ImplicitNullChecks"/>
 			<arg value="-XX:+CITime" />
+			<arg value="-Dspring.config.location=/application.properties"/>
 			<arg value="-jar" />
 			<arg value="servlet.jar" />
-			<libc stdin="/dev/null" stdout="/dev/log" stderr="/dev/log" rtc="/dev/rtc" socket="/socket" />
+			<libc stdin="/dev/null" stdout="/dev/log" stderr="/dev/log" rtc="/dev/rtc" socket="/dev/socket" />
 			<vfs>
 				<dir name="etc">
 					<inline name="resolv.conf">nameserver 1.1.1.1</inline>
 				</dir>
 				<dir name="dev">
+					<dir name="socket"> <lwip dhcp="yes" /> </dir>
 					<log/><null/><inline name="rtc">2000-01-01 00:00</inline>
 				</dir>
 				<dir name="bin">
@@ -263,7 +205,6 @@ append config {
 				<rom name="net.lib.so" />
 				<rom name="management.lib.so"/>
 				<fs label="block" buffer_size="524288"/>
-				<fs label="nic"/>
 				<ram/>
 			</vfs>
 		</config>
@@ -283,19 +224,19 @@ set boot_modules {
 
 	gpio_drv sd_card_drv part_block
 
-	fs_rom report_rom fs_log log_core
+	fs_rom report_rom
 
 	nic_router
 
-	java jli.lib.so vfs
-	java.lib.so jzip.lib.so jimage.lib.so
-	libc_pipe.lib.so
-	zlib.lib.so nio.lib.so jnet.lib.so
-	vfs.lib.so vfs_rump.lib.so rump.lib.so
-	rump_fs.lib.so vfs_lxip.lib.so stdcxx.lib.so
-	management.lib.so lxip.lib.so
+	libc.lib.so libm.lib.so libc_pipe.lib.so
+	stdcxx.lib.so zlib.lib.so
 
-	jvm.lib.so libc.lib.so libm.lib.so
+	vfs vfs.lib.so vfs_lwip.lib.so
+	vfs_rump.lib.so rump.lib.so rump_fs.lib.so
+
+	java jli.lib.so jnet.lib.so nio.lib.so
+	java.lib.so jzip.lib.so jimage.lib.so
+	jvm.lib.so management.lib.so
 }
 
 append boot_modules [nic_drv_binary]
@@ -307,7 +248,6 @@ build_boot_image $boot_modules
 #
 # Prepare disk image
 #
-set image     jdk_demo.img
 set dd        [installed_command dd]
 set sfdisk    [installed_command sfdisk]
 set mkfsext2  [installed_command mkfs.ext2]
@@ -321,25 +261,24 @@ proc jdk_generated { } {
 }
 
 # create file and partition table
-exec $dd if=/dev/zero of=[run_dir].img bs=1M count=128 2> /dev/null
+exec $dd if=/dev/zero of=[run_dir].img bs=1M count=256 2> /dev/null
 exec  echo ";" | $sfdisk [run_dir].img
 
 # scan file
 set dev [exec sudo $losetup  --partscan --show --find [run_dir].img]
 
 # mount and copy data to image
-exec mkdir -p [run_dir].tmp
+exec mkdir -p [run_dir].tmp/modules
 exec sudo $mkfsext2 -q "${dev}p1"
 exec sudo  mount "${dev}p1" [run_dir].tmp
 
-foreach f [glob -directory [jdk_generated]/src/app/jdk/bin *] {
+set gen [jdk_generated]/src/app/jdk/bin
+exec sudo cp -rf $gen/conf $gen/lib $gen/tzdb.dat $gen/u-boot [run_dir].tmp
+
+foreach f [glob -directory flex4apps *] {
 	exec sudo cp -rf $f [run_dir].tmp }
 
 exec sudo cp -f [run_dir]/uImage [run_dir].tmp
-
-exec sudo cp -f bin/jvm.lib.so [run_dir].tmp
-exec sudo cp -f bin/libc.lib.so [run_dir].tmp
-exec sudo cp -f bin/libm.lib.so [run_dir].tmp
 
 # unmount
 exec sudo  umount "${dev}p1"
