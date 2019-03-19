@@ -173,14 +173,11 @@ append config {
 			<arg value="-Dspring.config.location=/application.properties"/>
 			<arg value="-jar" />
 			<arg value="servlet.jar" />
-			<libc stdin="/dev/null" stdout="/dev/log" stderr="/dev/log" rtc="/dev/rtc" socket="/dev/socket" />
+			<libc stdin="/dev/null" stdout="/dev/log" stderr="/dev/log" rtc="/dev/rtc" socket="/dev/socket" nameserver_file="/dev/socket/nameserver"/>
 			<vfs>
-				<dir name="etc">
-					<inline name="resolv.conf">nameserver 1.1.1.1</inline>
-				</dir>
 				<dir name="dev">
 					<dir name="socket"> <lwip dhcp="yes" /> </dir>
-					<log/><null/><inline name="rtc">2000-01-01 00:00</inline>
+					<log/><null/><inline name="rtc">2019-03-19 13:00</inline>
 				</dir>
 				<dir name="bin">
 					<rom name="java" />
