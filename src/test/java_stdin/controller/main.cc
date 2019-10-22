@@ -49,7 +49,7 @@ class Controller::Main
 
 void Controller::Main::_handle_terminal_connected()
 {
-	String<50> temp { "request;" };
+	String<50> temp { "req uest;" };
 	_terminal_root.current_session()->write(temp.string(), temp.length());
 }
 
