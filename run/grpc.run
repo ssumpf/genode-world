@@ -1,7 +1,7 @@
 create_boot_directory
 
 
-import_from_depot [depot_user]/src/[base_src]
+# import_from_depot [depot_user]/src/[base_src]
 import_from_depot [depot_user]/src/dynamic_rom
 import_from_depot [depot_user]/src/init
 import_from_depot [depot_user]/src/libc
@@ -14,10 +14,13 @@ import_from_depot [depot_user]/src/report_rom
 import_from_depot [depot_user]/src/stdcxx
 import_from_depot [depot_user]/src/vfs
 import_from_depot [depot_user]/src/vfs_lwip
+import_from_depot [depot_user]/src/vfs_lxip
 import_from_depot [depot_user]/src/zlib
 
 
 set build_components {
+	core
+	timer
 	test/grpc/server
 	test/grpc/client
 }
@@ -35,6 +38,7 @@ set config {
 		<service name="CPU"/>
 		<service name="LOG"/>
 		<service name="PD"/>
+		<service name="RM"/>
 		<service name="ROM"/>
 	</parent-provides>
 	<default-route>
@@ -85,8 +89,8 @@ append config {
 			<domain name="client" interface="10.10.20.1/24">
 				<ip dst="10.10.10.0/0" domain="server"/>
 			</domain>
-			<policy label="init -> grpc_server -> lwip" domain="server"/>
-			<policy label="init -> grpc_client -> lwip" domain="client"/>
+			<policy label="init -> grpc_server -> " domain="server"/>
+			<policy label="init -> grpc_client -> " domain="client"/>
 		</config>
 	</start>
 
@@ -102,6 +106,7 @@ append config {
 							<service name="LOG"/>
 							<service name="Nic"/>
 							<service name="PD"/>
+							<service name="RM"/>
 							<service name="ROM"/>
 							<service name="Timer"/>
 						</parent-provides>
@@ -110,7 +115,7 @@ append config {
 						</default-route>
 						<default caps="100"/>
 						<start name="grpc_server" caps="200">
-							<resource name="RAM" quantum="8M"/>
+							<resource name="RAM" quantum="50M"/>
 							<config port="50051">
 								<arg value="grpc_server"/>
 								<libc stdout="/dev/log" stderr="/dev/log" rtc="/dev/rtc" socket="/dev/socket"/>
@@ -119,7 +124,7 @@ append config {
 										<log/> <null/>
 										<inline name="rtc">2000-01-01 00:00</inline>
 										<dir name="socket">
-											<lwip ip_addr="10.10.10.55" netmask="255.255.255.0" gateway="10.10.10.1"/>
+											<lxip ip_addr="10.10.10.55" netmask="255.255.255.0" gateway="10.10.10.1"/>
 										</dir>
 									</dir>
 								</vfs>
@@ -135,6 +140,7 @@ append config {
 							<service name="LOG"/>
 							<service name="Nic"/>
 							<service name="PD"/>
+							<service name="RM"/>
 							<service name="ROM"/>
 							<service name="Timer"/>
 						</parent-provides>
@@ -143,7 +149,7 @@ append config {
 						</default-route>
 						<default caps="100"/>
 						<start name="grpc_server" caps="200">
-							<resource name="RAM" quantum="8M"/>
+							<resource name="RAM" quantum="50M"/>
 							<config>
 								<arg value="grpc_server"/>
 								<libc stdout="/dev/log" stderr="/dev/log" rtc="/dev/rtc" socket="/dev/socket"/>
@@ -152,14 +158,14 @@ append config {
 										<log/> <null/>
 										<inline name="rtc">2000-01-01 00:00</inline>
 										<dir name="socket">
-											<lwip ip_addr="10.10.10.55" netmask="255.255.255.0" gateway="10.10.10.1"/>
+											<lxip ip_addr="10.10.10.55" netmask="255.255.255.0" gateway="10.10.10.1"/>
 										</dir>
 									</dir>
 								</vfs>
 							</config>
 						</start>
-						<start name="grpc_client" caps="200">
-							<resource name="RAM" quantum="8M"/>
+						<start name="grpc_client" caps="400">
+							<resource name="RAM" quantum="100M"/>
 							<config>
 								<arg value="grpc_client"/>
 								<libc stdout="/dev/log" stderr="/dev/log" rtc="/dev/rtc" socket="/dev/socket"/>
@@ -168,7 +174,7 @@ append config {
 										<log/> <null/>
 										<inline name="rtc">2000-01-02 00:00</inline>
 										<dir name="socket">
-											<lwip ip_addr="10.10.20.66" netmask="255.255.255.0" gateway="10.10.20.1"/>
+											<lxip ip_addr="10.10.20.66" netmask="255.255.255.0" gateway="10.10.20.1"/>
 										</dir>
 									</dir>
 								</vfs>
@@ -176,13 +182,13 @@ append config {
 						</start>
 					</config>
 				</inline>
-				<sleep milliseconds="2000000000"/>
+				<sleep milliseconds="30000"/>
 			</rom>
 		</config>
 	</start>
 
 	<start name="init" caps="1500">
-		<resource name="RAM" quantum="20M" />
+		<resource name="RAM" quantum="200M" />
 		<route>
 			<service name="ROM" label="config"> <child name="dynamic_rom" label="init.config"/> </service>
 			<any-service> <parent/> <any-child/> </any-service>
@@ -197,8 +203,11 @@ install_config $config
 
 
 set boot_modules {
+	core
+	timer
 	grpc_server
 	grpc_client
+	ld.lib.so
 	grpc.lib.so
 	libc_pipe.lib.so
 }
@@ -209,5 +218,5 @@ append qemu_args " -nographic "
 
 build_boot_image $boot_modules
 
-
-run_genode_until {.*say hello} 20
+# this run script is written to reproduce following error:
+run_genode_until {.*14: failed to connect to all addresses} 300
