@@ -3,6 +3,7 @@
 #include <base/heap.h>
 #include <base/log.h>
 #include <base/thread.h>
+#include <pthread.h>
 #include "greeter_server.h"
 
 enum { STACK_SIZE = 0xF000 };
@@ -10,37 +11,29 @@ enum { STACK_SIZE = 0xF000 };
 namespace Grpc_server {
 	using namespace Genode;
 
-	class Runner;
 	class Server_main;
 }
 
-class Grpc_server::Runner : public Thread
+static void *start_func(void *)
 {
-	public:
-		Runner(Env& env)
-			: Thread(env, "runner", STACK_SIZE)
-		{
-		}
+	Libc::with_libc([] () {
+		RunServer();
+	});
 
-		void entry() override
-		{
-			Libc::with_libc([] () {
-				RunServer();
-			});
-		}
-};
+	return nullptr;
+}
 
 class Grpc_server::Server_main
 {
 	private:
 		Env& _env;
-		Runner _runner { _env };
 
 	public:
 		Server_main(Env& env)
 			: _env(env)
 		{
-			_runner.start();
+			pthread_t t;
+			pthread_create(&t, 0, start_func, nullptr);
 		}
 };
 
