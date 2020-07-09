@@ -3,8 +3,8 @@ build test/glib
 create_boot_directory
 
 import_from_depot \
-	genodelabs/src/[base_src] \
-	genodelabs/src/init \
+	[depot_user]/src/[base_src] \
+	[depot_user]/src/init \
 
 install_config {
 <config>
@@ -34,6 +34,7 @@ install_config {
 				<ram/>
 				<dir name="home"> <ram/> </dir>
 				<dir name="var"> <dir name="tmp"> <ram/> </dir> </dir>
+				<dir name="tmp"> <ram/> </dir>
 				<dir name="dev"> <log/> </dir>
 			</vfs>
 			<libc stdout="/dev/log" stderr="/dev/log"/>
@@ -51,7 +52,6 @@ build_boot_image {
 	libiconv.lib.so
 	libm.lib.so
 	posix.lib.so
-	pthread.lib.so
 	test-glib
 }
 
