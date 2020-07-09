@@ -1618,14 +1618,14 @@ g_wakeup_get_pollfd T
 g_wakeup_new T
 g_wakeup_signal T
 g_warn_message T
-glib_binary_age R
+glib_binary_age T
 glib_check_version T
 glib_gettext T
 glib_init T
-glib_interface_age R
-glib_major_version R
+glib_interface_age T
+glib_major_version T
 glib_mem_profiler_table D 8
-glib_micro_version R
-glib_minor_version R
+glib_micro_version T
+glib_minor_version T
 glib_on_error_halt D 4
 glib_pgettext T
