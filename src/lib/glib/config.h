@@ -171,6 +171,3 @@
 
 /* Use pthreads */
 #define THREADS_POSIX
-
-/* Using GNU libiconv */
-#define USE_LIBICONV_GNU
