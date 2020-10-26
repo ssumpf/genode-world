@@ -22,60 +22,13 @@
 extern "C" {
 #include <mbimcli.h>
 }
-/* initial environment for the FreeBSD libc implementation */
-extern char **environ;
 
-/* provided by the application */
-extern "C" int main(int argc, char **argv, char **envp);
-
-extern "C" unsigned char __bss_start;
-extern "C" unsigned char _prog_img_end;
-
-extern "C" void wait_for_continue();
-
-static void clear_bss()
-{
-	Genode::log("CLEAR: ", &__bss_start, " size: ", &_prog_img_end - &__bss_start - 4);
-	Genode::memset(&__bss_start, 0, &_prog_img_end - &__bss_start - 4);
-}
-static void construct_component(Libc::Env &env)
-{
-	int argc    = 5;
-	char **envp = nullptr;
-
-	enum { SEQ_COUNT = 5 };
-
-//	populate_args_and_env(env, argc, argv, envp);
-	char const *arg[SEQ_COUNT][6] =  {
-		{ "mbimcli", "--verbose", "-d", "/dev/cdc-wdm0", "--enter-pin=1889", "HOME=/" },
-		{ "mbimcli", "--verbose", "-d", "/dev/cdc-wdm0", "--query-registration-state", "HOME=/" },
-		{ "mbimcli", "--verbose", "-d", "/dev/cdc-wdm0", "--attach-packet-service", "HOME=/" },
-		{ "mbimcli", "--verbose", "-d", "/dev/cdc-wdm0", "--connect=apn='internet.eplus.de',auth='PAP',username='eplus',password='eplus'", "HOME=/" },
-		{ "mbimcli", "--verbose", "-d", "/dev/cdc-wdm0", "--disconnect", "HOME=/" }
-	};
-
-	int ret = 0;
-	Genode::log("BSS: ", &__bss_start, " - ", &_prog_img_end);
-	for (unsigned i = 0; i < SEQ_COUNT /*SEQ_COUNT*/; i++) {
-		envp = (char **)&arg[i][5];
-		environ = envp;
-
-		Genode::warning("call main: ", i, " args: ", arg[i][4]);
-		ret = main(argc, (char **)arg[i], envp);
-		Genode::warning("returned ", ret, " i: ", i);
-		clear_bss();
-	}
-
-	Genode::warning("EXIT: ", ret);
-	exit(ret);
-}
-
-class Main
+class Mbim
 {
 	enum { TRACE = TRUE };
 
 	enum State {
-		NONE, QUERY, ATTACH, CONNECT };
+		NONE, PIN, QUERY, ATTACH, CONNECT };
 
 	private:
 
@@ -85,18 +38,45 @@ class Main
 		unsigned    _retry { 0 };
 		guint32     _session_id { 0 };
 
+		static Mbim *_mbim(gpointer user_data)
+		{
+			return reinterpret_cast<Mbim *>(user_data);
+		}
+
+		MbimMessage *_command_response(GAsyncResult *res, bool shutdown = true)
+		{
+			GError *error         = nullptr;
+			MbimMessage *response = mbim_device_command_finish (_device, res, &error);
+
+			if (!response ||
+			    !mbim_message_response_get_result (response, MBIM_MESSAGE_TYPE_COMMAND_DONE, &error)) {
+				Genode::error("operation failed: ", (char const*)error->message);
+				if (shutdown)
+					_shutdown(FALSE);
+				return nullptr;
+			}
+
+			return response;
+		}
+
+		gchar const *_pin()
+		{
+			//XXX: make configurable
+			return "1889";
+		}
+
 		static void _device_close_ready (MbimDevice   *dev,
 		                                 GAsyncResult *res, gpointer user_data)
 		{
 			Genode::log(__func__);
-			Main *main = reinterpret_cast<Main *>(user_data);
+			Mbim *mbim = reinterpret_cast<Mbim *>(user_data);
 			g_autoptr(GError) error = nullptr;
-			if (!mbim_device_close_finish(main->_device, res, &error)) {
+			if (!mbim_device_close_finish(mbim->_device, res, &error)) {
 				Genode::error("couldn't close device: ", (char const*)error->message);
 				g_error_free(error);
 			}
 
-			g_main_loop_quit(main->_loop);
+			g_main_loop_quit(mbim->_loop);
 		}
 
 		void _shutdown(gboolean operation_status)
@@ -123,6 +103,26 @@ class Main
 			switch (_state) {
 
 				case NONE:
+					request = (mbim_message_pin_set_new(MBIM_PIN_TYPE_PIN1,
+					                                    MBIM_PIN_OPERATION_ENTER,
+					                                    _pin(),
+					                                    nullptr,
+					                                    &error));
+					if (!request) {
+						Genode::error("couldn't create request: ", (char const*)error->message);
+						_shutdown (FALSE);
+						return;
+					}
+
+					mbim_device_command (_device,
+					                     request,
+					                     10,
+					                     nullptr,
+					                     (GAsyncReadyCallback)_pin_ready,
+					                     this);
+					break;
+
+				case PIN:
 					request = mbim_message_register_state_query_new (NULL);
 					mbim_device_command(_device,
 					                    request,
@@ -217,20 +217,50 @@ class Main
 			}
 		}
 
+		static void _pin_ready(MbimDevice   *dev,
+		                       GAsyncResult *res, gpointer user_data)
+		{
+			Genode::log(__func__);
+			Mbim *mbim = _mbim(user_data);
+			g_autoptr(GError)      error    = nullptr;
+			g_autoptr(MbimMessage) response = mbim->_command_response(res, false);
+
+			if (!response) {
+				Genode::log("PIN might be entered already");
+				mbim->_state = Mbim::PIN;
+				mbim->_send_request();
+				return;
+			}
+
+			MbimPinType             pin_type;
+			MbimPinState            pin_state;
+			guint32                 remaining_attempts;
+			if (!mbim_message_pin_response_parse (
+			        response,
+			        &pin_type,
+			        &pin_state,
+			        &remaining_attempts,
+			        &error)) {
+				Genode::error("couldn't parse response message: ", (char const *)error->message);
+				mbim->_shutdown (FALSE);
+				return;
+			}
+
+			Genode::log("PIN: state: ", mbim_pin_state_get_string(pin_state),
+			            " remaining attempts: ", remaining_attempts);
+			mbim->_state = Mbim::PIN;
+			mbim->_send_request();
+		}
+
 		static void _register_state(MbimDevice   *dev,
 		                            GAsyncResult *res, gpointer user_data)
 		{
 			Genode::log(__func__);
-			Main *main = reinterpret_cast<Main *>(user_data);
+			Mbim *mbim = _mbim(user_data);
 			g_autoptr(GError)      error    = nullptr;
-			g_autoptr(MbimMessage) response = mbim_device_command_finish (main->_device, res, &error);
+			g_autoptr(MbimMessage) response = mbim->_command_response(res);
 
-			if (!response ||
-			    !mbim_message_response_get_result (response, MBIM_MESSAGE_TYPE_COMMAND_DONE, &error)) {
-				Genode::error("operation failed: ", (char const*)error->message);
-				main->_shutdown(FALSE);
-				return;
-			}
+			if (!response) return;
 
 			MbimNwError          nw_error;
 			MbimRegisterState    register_state;
@@ -253,7 +283,7 @@ class Main
 			                                                &registration_flag,
 			                                                &error)) {
 				Genode::error("couldn't parse response message: ", (char const *)error->message);
-				main->_shutdown (FALSE);
+				mbim->_shutdown (FALSE);
 				return;
 			}
 
@@ -261,30 +291,25 @@ class Main
 			if (register_state == MBIM_REGISTER_STATE_HOME ||
 			    register_state == MBIM_REGISTER_STATE_ROAMING ||
 			    register_state == MBIM_REGISTER_STATE_PARTNER)
-				main->_state = Main::QUERY;
+				mbim->_state = Mbim::QUERY;
 
-			if (main->_retry++ >= 5) {
-				Genode::error("Device not registered");
-				main->_shutdown(FALSE);
+			if (mbim->_retry++ >= 100) {
+				Genode::error("Device not registered after ", mbim->_retry, " tries");
+				mbim->_shutdown(FALSE);
 			}
 
-			main->_send_request();
+			mbim->_send_request();
 		}
 
 		static void _packet_service_ready(MbimDevice   *dev,
 		                                  GAsyncResult *res, gpointer user_data)
 		{
 			Genode::log(__func__);
-			Main *main = reinterpret_cast<Main *>(user_data);
+			Mbim *mbim = _mbim(user_data);
 			GError *error                   = nullptr;
-			g_autoptr(MbimMessage) response = mbim_device_command_finish (main->_device, res, &error);
+			g_autoptr(MbimMessage) response = mbim->_command_response(res);
 
-			if (!response ||
-			    !mbim_message_response_get_result (response, MBIM_MESSAGE_TYPE_COMMAND_DONE, &error)) {
-				Genode::error("operation failed: ", (char const*)error->message);
-				main->_shutdown(FALSE);
-				return;
-			}
+			if (!response) return;
 
 			guint32                 nw_error;
 			MbimPacketServiceState  packet_service_state;
@@ -300,11 +325,11 @@ class Main
 			                                                &downlink_speed,
 			                                                &error)) {
 				Genode::error("couldn't parse response message: ", (char const *)error->message);
-				main->_shutdown (FALSE);
+				mbim->_shutdown (FALSE);
 				return;
 			}
 
-			main->_state = Main::ATTACH;
+			mbim->_state = Mbim::ATTACH;
 
 			highest_available_data_class_str = mbim_data_class_build_string_from_mask (highest_available_data_class);
 			Genode::log("Successfully attached packet service");
@@ -312,23 +337,18 @@ class Main
 			            "\tAvailable data classes: '", (char const *)highest_available_data_class_str, "'\n",
 			            "\t          Uplink speed: '", uplink_speed, "'\n",
 			            "\t        Downlink speed: '", downlink_speed, "'");
-			main->_send_request();
+			mbim->_send_request();
 		}
 
 		static void _connect_ready(MbimDevice   *dev,
 		                           GAsyncResult *res, gpointer user_data)
 		{
 			Genode::log(__func__);
-			Main *main = reinterpret_cast<Main *>(user_data);
+			Mbim *mbim = _mbim(user_data);
 			GError *error                   = nullptr;
-			g_autoptr(MbimMessage) response = mbim_device_command_finish (main->_device, res, &error);
+			g_autoptr(MbimMessage) response = mbim->_command_response(res);
 
-			if (!response ||
-			    !mbim_message_response_get_result (response, MBIM_MESSAGE_TYPE_COMMAND_DONE, &error)) {
-				Genode::error("operation failed: ", (char const*)error->message);
-				main->_shutdown(FALSE);
-				return;
-			}
+			if (!response) return;
 
 			guint32                 session_id;
 			MbimActivationState     activation_state;
@@ -346,31 +366,14 @@ class Main
 			        &nw_error,
 			        &error)) {
 				Genode::error("couldn't parse response message: ", (char const *)error->message);
-				main->_shutdown(FALSE);
+				mbim->_shutdown(FALSE);
 				return;
 			}
 
 			Genode::log("connected");
-			main->_session_id = session_id;
-			main->_state      = Main::CONNECT;
-			main->_send_request();
-		}
-
-		static void _device_open_ready(MbimDevice   *dev,
-		                               GAsyncResult *res, gpointer user_data)
-		{
-			Genode::log(__func__);
-			GError *error = NULL;
-			Main *main = reinterpret_cast<Main *>(user_data);
-			if (!mbim_device_open_finish(dev, res, &error)) {
-				Genode::error("couldn't open the MbimDevice: ",
-				              (char const *)error->message);
-				exit (EXIT_FAILURE);
-			}
-
-			main->_retry = 0;
-			main->_send_request();
-			Genode::log("Message returned");
+			mbim->_session_id = session_id;
+			mbim->_state      = Mbim::CONNECT;
+			mbim->_send_request();
 		}
 
 		static void _ip_configuration_query_ready(MbimDevice   *dev,
@@ -380,26 +383,44 @@ class Main
 			Genode::log(__func__);
 		}
 
+		static void _device_open_ready(MbimDevice   *dev,
+		                               GAsyncResult *res, gpointer user_data)
+		{
+			Genode::log(__func__);
+			GError *error = NULL;
+			Mbim *mbim = reinterpret_cast<Mbim *>(user_data);
+			if (!mbim_device_open_finish(dev, res, &error)) {
+				Genode::error("couldn't open the MbimDevice: ",
+				              (char const *)error->message);
+				exit (EXIT_FAILURE);
+			}
+
+			mbim->_retry = 0;
+			mbim->_send_request();
+			Genode::log("Message returned");
+		}
+
+
 		static void _device_new_ready(GObject *unsused, GAsyncResult *res, gpointer user_data)
 		{
 			Genode::log("device: ", (void *)user_data);
-			Main *main = reinterpret_cast<Main *>(user_data);
+			Mbim *mbim = reinterpret_cast<Mbim *>(user_data);
 			GError *error = NULL;
 			MbimDeviceOpenFlags open_flags = MBIM_DEVICE_OPEN_FLAGS_NONE;
 
-			main->_device = mbim_device_new_finish (res, &error);
-			if (!main->_device) {
+			mbim->_device = mbim_device_new_finish (res, &error);
+			if (!mbim->_device) {
 				Genode::error("couldn't create MbimDevice: ",
 				              (char const*)error->message);
 				exit (EXIT_FAILURE);
 			}
 
-			mbim_device_open_full(main->_device,
+			mbim_device_open_full(mbim->_device,
 			                      open_flags,
 			                      30,
 			                      nullptr,
 			                      (GAsyncReadyCallback) _device_open_ready,
-			                      main);
+			                      mbim);
 		}
 
 		static void _log_handler(const gchar *log_domain,
@@ -457,7 +478,7 @@ class Main
 		}
 	public:
 
-		Main(Libc::Env &env)
+		Mbim(Libc::Env &env)
 		{
 			_init();
 			_connect();
@@ -469,6 +490,6 @@ class Main
 void Libc::Component::construct(Libc::Env &env)
 {
 	Libc::with_libc([&] () {
-		static Main main { env };
+		static Mbim main { env };
 	});
 }
