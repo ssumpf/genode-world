@@ -1,18 +1,27 @@
 /*
- * \brief  Entry point for POSIX applications
- * \author Norman Feske
- * \date   2016-12-23
+ * \brief  MBIM connection bindings
+ * \author Sebastian Sumpf
+ * \date   2020-10-27
  */
 
 /*
- * Copyright (C) 2016-2020 Genode Labs GmbH
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 2 of the License, or
+ * (at your option) any later version.
  *
- * This file is part of the Genode OS framework, which is distributed
- * under the terms of the GNU Affero General Public License version 3.
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 /* Genode includes */
 #include <libc/component.h>
+#include <net/ipv4.h>
 
 /* libc includes */
 #include <libc/args.h>
@@ -27,8 +36,14 @@ class Mbim
 {
 	enum { TRACE = TRUE };
 
-	enum State {
-		NONE, PIN, QUERY, ATTACH, CONNECT };
+	enum State { NONE, PIN, QUERY, ATTACH, CONNECT };
+
+	struct Connection {
+		Net::Ipv4_address ip;
+		Net::Ipv4_address mask;
+		Net::Ipv4_address gateway;
+		Net::Ipv4_address dns[2];
+	};
 
 	private:
 
@@ -37,6 +52,7 @@ class Mbim
 		MbimDevice *_device { nullptr };
 		unsigned    _retry { 0 };
 		guint32     _session_id { 0 };
+		Connection  _connection { };
 
 		static Mbim *_mbim(gpointer user_data)
 		{
@@ -381,6 +397,80 @@ class Mbim
 		                                          gpointer user_data)
 		{
 			Genode::log(__func__);
+			Mbim *mbim = _mbim(user_data);
+			GError *error                   = nullptr;
+			g_autoptr(MbimMessage) response = mbim->_command_response(res);
+
+			if (!response) return;
+
+			MbimIPConfigurationAvailableFlag  ipv4configurationavailable;
+			g_autofree gchar                 *ipv4configurationavailable_str = NULL;
+			MbimIPConfigurationAvailableFlag  ipv6configurationavailable;
+			g_autofree gchar                 *ipv6configurationavailable_str = NULL;
+			guint32                           ipv4addresscount;
+			g_autoptr(MbimIPv4ElementArray)   ipv4address = NULL;
+			guint32                           ipv6addresscount;
+			g_autoptr(MbimIPv6ElementArray)   ipv6address = NULL;
+			const MbimIPv4                   *ipv4gateway;
+			const MbimIPv6                   *ipv6gateway;
+			guint32                           ipv4dnsservercount;
+			g_autofree MbimIPv4              *ipv4dnsserver = NULL;
+			guint32                           ipv6dnsservercount;
+			g_autofree MbimIPv6              *ipv6dnsserver = NULL;
+			guint32                           ipv4mtu;
+			guint32                           ipv6mtu;
+
+			if (!mbim_message_ip_configuration_response_parse (
+			        response,
+			        NULL, /* sessionid */
+			        &ipv4configurationavailable,
+			        &ipv6configurationavailable,
+			        &ipv4addresscount,
+			        &ipv4address,
+			        &ipv6addresscount,
+			        &ipv6address,
+			        &ipv4gateway,
+			        &ipv6gateway,
+			        &ipv4dnsservercount,
+			        &ipv4dnsserver,
+			        &ipv6dnsservercount,
+			        &ipv6dnsserver,
+			        &ipv4mtu,
+			        &ipv6mtu,
+			        &error))
+			return;
+
+			if (!ipv4configurationavailable) {
+				Genode::error("No ipv4 configuration available");
+				return;
+			}
+
+			Net::Ipv4_address address { ipv4address[0]->ipv4_address.addr };
+
+			Genode::uint32_t netmask_lower = 32 - ipv4address[0]->on_link_prefix_length;
+			Genode::uint32_t netmask = ~0u;
+			for (Genode::uint32_t i = 0; i < netmask_lower; i++) {
+				netmask ^= (1 << i);
+			}
+
+			Net::Ipv4_address mask { Net::Ipv4_address::from_uint32_little_endian(netmask) };
+			Net::Ipv4_address gateway { (void *)ipv4gateway->addr };
+			Genode::log("ip     : ", address);
+			Genode::log("mask   : ", mask);
+			Genode::log("gateway: ", gateway);
+
+			Net::Ipv4_address dns[2];
+			for (Genode::uint32_t i = 0; i < ipv4dnsservercount && i < 2; i++) {
+				dns[i] = Net::Ipv4_address { (void *)ipv4dnsserver[i].addr };
+				Genode::log("dns", i, "   : ", dns[i]);
+			}
+
+			mbim->_connection.ip      = address;
+			mbim->_connection.mask    = mask;
+			mbim->_connection.gateway = gateway;
+			mbim->_connection.dns[0]  = dns[0];
+			mbim->_connection.dns[1]  = dns[1];
+			mbim->_report();
 		}
 
 		static void _device_open_ready(MbimDevice   *dev,
